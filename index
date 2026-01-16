@@ -1,1 +1,699 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <!-- iOS Web App Config -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="השגרה שלי">
+    
+    <title>השגרה היומית</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Rubik', 'sans-serif'],
+                        script: ['Rubik', 'sans-serif'], // Dancing script doesn't work well for Hebrew
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Google Fonts (Rubik for Hebrew) -->
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <style>
+        body {
+            font-family: 'Rubik', sans-serif;
+            background-color: #f8f5f2;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        button:active { transform: scale(0.95); }
+        .task-item { transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.2s; }
+        .is-dragging { 
+            z-index: 50; 
+            transform: scale(1.02); 
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            opacity: 0.9;
+        }
+        
+        /* Custom Color Picker Style */
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            padding: 0;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch {
+            border: none;
+            border-radius: 50%;
+            border: 2px solid rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div style="display:flex; justify-content:center; align-items:center; height:100vh; color:#999; font-family:sans-serif;">
+            טוען אפליקציה...
+        </div>
+    </div>
+
+    <!-- Firebase Imports via Module Script -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInWithRedirect, signInWithPopup, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- 🔴 CONFIGURATION SECTION 🔴 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDNA6RoKmDZKOaFx30k2SrS70EkqVckmvg",
+            authDomain: "sara-s-daily-tasks.firebaseapp.com",
+            projectId: "sara-s-daily-tasks",
+            storageBucket: "sara-s-daily-tasks.firebasestorage.app",
+            messagingSenderId: "431647734098",
+            appId: "1:431647734098:web:cfad56edce7b6d14aa628b"
+        };
+
+        try {
+            const app = initializeApp(typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig);
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            const provider = new GoogleAuthProvider();
+
+            window.db = db;
+            window.auth = auth;
+            window.provider = provider;
+            window.signInWithRedirect = signInWithRedirect;
+            window.signInWithPopup = signInWithPopup;
+            window.getRedirectResult = getRedirectResult;
+            window.signOut = signOut;
+            window.onAuthStateChanged = onAuthStateChanged;
+            window.setPersistence = setPersistence;
+            window.browserLocalPersistence = browserLocalPersistence;
+            window.doc = doc;
+            window.onSnapshot = onSnapshot;
+            window.setDoc = setDoc;
+            window.updateDoc = updateDoc;
+            
+            window.dispatchEvent(new Event('firebase-ready'));
+        } catch(e) {
+            console.error("Firebase Init Error:", e);
+            document.getElementById('root').innerHTML = `<div style="padding:20px; color:red;">Firebase Init Failed: ${e.message}</div>`;
+        }
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Icon Library ---
+        const IconWrapper = ({ children, className, style, onClick }) => <svg onClick={onClick} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>{children}</svg>;
+        
+        // Specific Icons
+        const Icons = {
+            Plus: (props) => <IconWrapper {...props}><path d="M5 12h14"/><path d="M12 5v14"/></IconWrapper>,
+            Trash2: (props) => <IconWrapper {...props}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconWrapper>,
+            Pencil: (props) => <IconWrapper {...props}><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></IconWrapper>,
+            Check: (props) => <IconWrapper {...props}><polyline points="20 6 9 17 4 12"/></IconWrapper>,
+            Coffee: (props) => <IconWrapper {...props}><path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><line x1="6" x2="6" y1="2" y2="4"/><line x1="10" x2="10" y1="2" y2="4"/><line x1="14" x2="14" y1="2" y2="4"/></IconWrapper>,
+            Users: (props) => <IconWrapper {...props}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></IconWrapper>,
+            Moon: (props) => <IconWrapper {...props}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></IconWrapper>,
+            Sun: (props) => <IconWrapper {...props}><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></IconWrapper>,
+            Calendar: (props) => <IconWrapper {...props}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></IconWrapper>,
+            LayoutGrid: (props) => <IconWrapper {...props}><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></IconWrapper>,
+            Repeat: (props) => <IconWrapper {...props}><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></IconWrapper>,
+            CheckCircle2: (props) => <IconWrapper {...props}><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></IconWrapper>,
+            LogOut: (props) => <IconWrapper {...props}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></IconWrapper>,
+            Cloud: (props) => <IconWrapper {...props}><path d="M17.5 19c0-3.037-2.463-5.5-5.5-5.5S6.5 15.963 6.5 19"/><path d="M20 16.5c2.3 0 4 1.2 4 4.5"/><path d="M4 16.5c-2.3 0-4 1.2-4 4.5"/><path d="M12 13.5V6"/><path d="M12 6 8.5 9.5"/><path d="M12 6l3.5 3.5"/></IconWrapper>,
+            Settings: (props) => <IconWrapper {...props}><path d="M12.22 2h-.44a2 2 0 0 1-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73v.18a2 2 0 0 1 2 2h.44a2 2 0 0 1 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.39a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 1-2-2z"/><circle cx="12" cy="12" r="3"/></IconWrapper>,
+            Briefcase: (props) => <IconWrapper {...props}><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></IconWrapper>,
+            Home: (props) => <IconWrapper {...props}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></IconWrapper>,
+            Heart: (props) => <IconWrapper {...props}><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></IconWrapper>,
+            Book: (props) => <IconWrapper {...props}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></IconWrapper>,
+            Star: (props) => <IconWrapper {...props}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></IconWrapper>,
+        };
+
+        // --- Defaults & Constants ---
+        // Default categories in Hebrew
+        const DEFAULT_CATEGORIES = [
+            { id: 'All', label: 'הכל', icon: 'LayoutGrid', color: '#FF7F50' },
+            { id: 'Morning', label: 'בוקר', icon: 'Sun', color: '#FDB813' },
+            { id: 'Workplace', label: 'עבודה', icon: 'Briefcase', color: '#A0785A' },
+            { id: 'Kids', label: 'ילדים', icon: 'Users', color: '#FB7185' }, // Rose-400 equivalent
+            { id: 'Evening', label: 'ערב', icon: 'Moon', color: '#78716C' }, // Stone-500 equivalent
+        ];
+
+        const DEFAULT_PREFS = {
+            appTitle: "השגרה היומית שלי",
+            categories: DEFAULT_CATEGORIES
+        };
+
+        const DEFAULT_TASKS_HE = [
+            { id: 'm1', text: 'הליכה 30-45 דקות', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'm2', text: 'תפריט ערב והפשרה', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'm4', text: 'פרק תניא', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'm5', text: 'תפילת שחרית', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'm6', text: 'תהילים יומי', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'm7', text: 'חומש יומי', completed: false, category: 'Morning', type: 'daily' },
+            { id: 'w1', text: 'סיכום 30 דקות עבודה', completed: false, category: 'Workplace', type: 'daily' },
+            { id: 'k1', text: 'אוכל לבנות', completed: false, category: 'Kids', type: 'daily' },
+            { id: 'k2', text: 'מקלחות', completed: false, category: 'Kids', type: 'daily' },
+            { id: 'e1', text: 'הכנת ארוחת ערב', completed: false, category: 'Evening', type: 'daily' },
+        ];
+
+        // --- Helper to convert Hex to RGBA for backgrounds ---
+        const hexToRgba = (hex, alpha) => {
+            let r = 0, g = 0, b = 0;
+            if (hex.length === 4) {
+                r = parseInt(hex[1] + hex[1], 16);
+                g = parseInt(hex[2] + hex[2], 16);
+                b = parseInt(hex[3] + hex[3], 16);
+            } else if (hex.length === 7) {
+                r = parseInt(hex.substring(1, 3), 16);
+                g = parseInt(hex.substring(3, 5), 16);
+                b = parseInt(hex.substring(5, 7), 16);
+            }
+            return `rgba(${r},${g},${b},${alpha})`;
+        };
+
+        function App() {
+            // Auth State
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [authError, setAuthError] = useState(null);
+            const [syncStatus, setSyncStatus] = useState('בודק...');
+            
+            // App Data State
+            const [tasks, setTasks] = useState([]);
+            const [prefs, setPrefs] = useState(DEFAULT_PREFS);
+            
+            // UI State
+            const [activeTab, setActiveTab] = useState('All');
+            const [inputCategory, setInputCategory] = useState(DEFAULT_CATEGORIES[1].id);
+            const [newTask, setNewTask] = useState('');
+            const [inputType, setInputType] = useState('daily');
+            const [isInputFocused, setIsInputFocused] = useState(false);
+            
+            // Edit/Drag State
+            const [editingId, setEditingId] = useState(null);
+            const [editText, setEditText] = useState('');
+            const [draggedTaskId, setDraggedTaskId] = useState(null);
+            const longPressTimer = useRef(null);
+            const isScrolling = useRef(false);
+
+            // Settings Modal State
+            const [showSettings, setShowSettings] = useState(false);
+            const [tempPrefs, setTempPrefs] = useState(null);
+            const [showIconPicker, setShowIconPicker] = useState(null); // Category ID for picker
+
+            // Initialize Auth
+            useEffect(() => {
+                const initAuth = async () => {
+                    try { if (window.auth) await window.setPersistence(window.auth, window.browserLocalPersistence); } catch (e) { console.error(e); }
+                    if (window.onAuthStateChanged) {
+                        window.onAuthStateChanged(window.auth, (currentUser) => {
+                            setUser(currentUser);
+                            if (!currentUser) setLoading(false);
+                        });
+                        window.getRedirectResult(window.auth).catch(e => { setAuthError(e.message); setLoading(false); });
+                    } else {
+                        // Fallback poll
+                        const interval = setInterval(() => { 
+                            if (window.auth) { 
+                                clearInterval(interval); 
+                                window.onAuthStateChanged(window.auth, (u) => { setUser(u); if(!u) setLoading(false); }); 
+                            } 
+                        }, 100);
+                    }
+                };
+                initAuth();
+            }, []);
+
+            // Sync with Firestore
+            useEffect(() => {
+                if (!user) return;
+                setSyncStatus('מסתנכרן...');
+                const userDocRef = window.doc(window.db, 'users', user.uid);
+                
+                const unsubscribe = window.onSnapshot(userDocRef, (docSnap) => {
+                    const today = new Date().toDateString();
+                    setSyncStatus('מסונכרן');
+                    
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        
+                        // Handle Preferences
+                        if (data.preferences) {
+                            setPrefs(data.preferences);
+                        }
+
+                        // Handle Tasks
+                        let loadedTasks = data.items || [];
+                        const lastResetDate = data.lastResetDate;
+
+                        if (lastResetDate !== today) {
+                            console.log("New day detected. Resetting.");
+                            // Keep default dailies, keep custom dailies (reset), keep uncompleted 1x
+                            const resetTasks = loadedTasks.map(t => {
+                                if (t.type === 'daily') return { ...t, completed: false };
+                                if (t.type === '1to' && !t.completed) return t;
+                                return null;
+                            }).filter(Boolean);
+
+                            // Ensure default tasks exist for new users if array empty? No, respect user data.
+                            // But for very first login we handle below.
+                            
+                            window.setDoc(userDocRef, { items: resetTasks, lastResetDate: today }, { merge: true });
+                        } else {
+                            // Sort by completion (done at bottom)
+                            const incomplete = loadedTasks.filter(t => !t.completed);
+                            const complete = loadedTasks.filter(t => t.completed);
+                            setTasks([...incomplete, ...complete]);
+                        }
+                    } else {
+                        // NEW USER
+                        console.log("Creating new user doc");
+                        window.setDoc(userDocRef, { 
+                            items: DEFAULT_TASKS_HE, 
+                            preferences: DEFAULT_PREFS,
+                            lastResetDate: today 
+                        }).catch(err => { 
+                            setSyncStatus('⚠️ שגיאת שמירה'); 
+                        });
+                        setTasks(DEFAULT_TASKS_HE);
+                        setPrefs(DEFAULT_PREFS);
+                    }
+                    setLoading(false);
+                }, (error) => { 
+                    setSyncStatus('⚠️ שגיאה'); 
+                    console.error(error);
+                });
+                return () => unsubscribe();
+            }, [user]);
+
+            // Sync Input Category with Active Tab
+            useEffect(() => {
+                if (activeTab !== 'All') setInputCategory(activeTab);
+            }, [activeTab]);
+
+            // --- Handlers ---
+
+            const loginRedirect = async () => { setAuthError(null); setLoading(true); try { await window.signInWithRedirect(window.auth, window.provider); } catch (e) { setAuthError(e.message); setLoading(false); } };
+            const loginPopup = async () => { setAuthError(null); try { await window.signInWithPopup(window.auth, window.provider); } catch (e) { setAuthError(e.message); } };
+            const logout = () => { window.signOut(window.auth); setTasks([]); setAuthError(null); };
+
+            const saveTasks = (newTasks) => { 
+                if (!user) return; 
+                setTasks(newTasks); 
+                setSyncStatus('שומר...');
+                window.updateDoc(window.doc(window.db, 'users', user.uid), { items: newTasks })
+                    .then(() => setSyncStatus('מסונכרן'))
+                    .catch(e => { setSyncStatus('⚠️ שגיאה בשמירה'); });
+            };
+
+            const handleAddTask = (e) => { 
+                e.preventDefault(); 
+                if (!newTask.trim()) return; 
+                const newTaskItem = { id: crypto.randomUUID(), text: newTask.trim(), completed: false, category: inputCategory, type: inputType }; 
+                const incomplete = tasks.filter(t => !t.completed); 
+                const complete = tasks.filter(t => t.completed); 
+                saveTasks([...incomplete, newTaskItem, ...complete]); 
+                setNewTask(''); 
+            };
+
+            const toggleTask = (taskId) => { 
+                const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, completed: !t.completed } : t); 
+                const incomplete = updatedTasks.filter(t => !t.completed); 
+                const complete = updatedTasks.filter(t => t.completed); 
+                saveTasks([...incomplete, ...complete]); 
+            };
+
+            const deleteTask = (taskId) => { const newTasks = tasks.filter(t => t.id !== taskId); saveTasks(newTasks); };
+            const startEditing = (task) => { setEditingId(task.id); setEditText(task.text); };
+            const saveEdit = () => { if (!editText.trim()) { cancelEdit(); return; } const updatedTasks = tasks.map(t => t.id === editingId ? { ...t, text: editText.trim() } : t); saveTasks(updatedTasks); setEditingId(null); setEditText(''); };
+            const cancelEdit = () => { setEditingId(null); setEditText(''); };
+            
+            const clearCompletedInTab = () => { 
+                const newTasks = tasks.reduce((acc, task) => { 
+                    const isVisible = activeTab === 'All' || task.category === activeTab; 
+                    if (!isVisible) { acc.push(task); return acc; } 
+                    if (task.completed) { if (task.type === 'daily') { acc.push({ ...task, completed: false }); } } 
+                    else { acc.push(task); } 
+                    return acc; 
+                }, []); 
+                saveTasks(newTasks); 
+            };
+
+            // Touch Drag Logic
+            const handleTouchStart = (e, taskId) => { if (editingId) return; isScrolling.current = false; longPressTimer.current = setTimeout(() => { if (!isScrolling.current) { setDraggedTaskId(taskId); if (navigator.vibrate) navigator.vibrate(50); } }, 500); };
+            const handleTouchMove = (e) => { isScrolling.current = true; if (draggedTaskId) { e.preventDefault(); const touch = e.touches[0]; const element = document.elementFromPoint(touch.clientX, touch.clientY); const row = element?.closest('[data-task-id]'); if (row) { const targetId = row.getAttribute('data-task-id'); if (targetId && targetId !== draggedTaskId) { reorderTasks(draggedTaskId, targetId); } } } else { clearTimeout(longPressTimer.current); } };
+            const handleTouchEnd = () => { clearTimeout(longPressTimer.current); setDraggedTaskId(null); isScrolling.current = false; };
+            const reorderTasks = (draggedId, targetId) => { const dragIndex = tasks.findIndex(t => t.id === draggedId); const targetIndex = tasks.findIndex(t => t.id === targetId); if (tasks[dragIndex].completed || tasks[targetIndex].completed) return; const newTasks = [...tasks]; const [draggedItem] = newTasks.splice(dragIndex, 1); newTasks.splice(targetIndex, 0, draggedItem); saveTasks(newTasks); };
+
+            // --- Settings Logic ---
+            const openSettings = () => {
+                setTempPrefs(JSON.parse(JSON.stringify(prefs)));
+                setShowSettings(true);
+            };
+
+            const saveSettings = () => {
+                setPrefs(tempPrefs);
+                window.updateDoc(window.doc(window.db, 'users', user.uid), { preferences: tempPrefs })
+                    .then(() => setSyncStatus('הגדרות נשמרו'))
+                    .catch(e => setSyncStatus('שגיאה בשמירת הגדרות'));
+                setShowSettings(false);
+            };
+
+            const updateTempCategory = (id, field, value) => {
+                const newCats = tempPrefs.categories.map(c => c.id === id ? { ...c, [field]: value } : c);
+                setTempPrefs({ ...tempPrefs, categories: newCats });
+            };
+
+            // --- Derived State ---
+            const filteredTasks = activeTab === 'All' ? tasks : tasks.filter(t => t.category === activeTab);
+            const completedCount = filteredTasks.filter(t => t.completed).length;
+            const progress = filteredTasks.length === 0 ? 0 : Math.round((completedCount / filteredTasks.length) * 100);
+            
+            const activeCategory = prefs.categories.find(c => c.id === activeTab) || prefs.categories[0];
+            const activeColor = activeCategory.color;
+            const inputCategoryObj = prefs.categories.find(c => c.id === inputCategory) || prefs.categories[0];
+            const InputIconComponent = Icons[inputCategoryObj.icon] || Icons.Sun;
+            
+            const todayDate = new Date();
+            const dateStr = todayDate.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
+            
+            // Generate dynamic styles for active theme
+            const activeBgStyle = { backgroundColor: activeTab === 'All' ? '#FF7F50' : activeColor };
+            const activeTextStyle = { color: activeTab === 'All' ? '#FF7F50' : activeColor };
+            const activeBorderColor = activeTab === 'All' ? '#FF7F50' : activeColor;
+            const activeLightBg = { backgroundColor: hexToRgba(activeTab === 'All' ? '#FF7F50' : activeColor, 0.15) };
+
+
+            if (!user) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8f5f2] p-6 text-center" dir="rtl">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full border border-stone-100">
+                            <h1 className="text-4xl font-bold text-stone-800 mb-4">השגרה היומית</h1>
+                            <p className="text-stone-500 mb-8">התחבר כדי לסנכרן את המשימות שלך.</p>
+                            {authError && <div className="mb-6 p-4 bg-red-50 text-red-600 text-right text-xs rounded-xl border border-red-100 break-words"><strong>שגיאה:</strong> {authError}</div>}
+                            <div className="space-y-3">
+                                <button onClick={loginRedirect} className="w-full bg-[#FF7F50] text-white font-bold py-3 rounded-xl shadow-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+                                    <Icons.Cloud className="w-5 h-5" /><span>התחבר עם גוגל</span>
+                                </button>
+                                <button onClick={loginPopup} className="w-full bg-stone-100 text-stone-600 font-bold py-3 rounded-xl hover:bg-stone-200 transition-colors flex items-center justify-center gap-2 text-sm">
+                                    <span>נתקל בבעיה? נסה בחלון קופץ</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen pb-32" onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+                    
+                    {/* Header */}
+                    <header className="bg-white/50 backdrop-blur-xl shadow-sm sticky top-0 z-20 border-b border-stone-200/60 select-none">
+                        <div className="max-w-md mx-auto pt-6 pb-2 px-4">
+                            <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <h1 className="text-3xl font-bold text-stone-800 tracking-tight">{prefs.appTitle}</h1>
+                                    <p className="text-sm text-stone-500 font-medium flex items-center gap-1.5 mt-1">
+                                        <Icons.Calendar className="w-4 h-4" /> <span>{dateStr}</span>
+                                    </p>
+                                </div>
+                                <div className="flex flex-col items-end gap-2">
+                                    <div className="flex gap-2">
+                                        <button onClick={openSettings} className="p-2 bg-stone-100 rounded-full text-stone-400 hover:text-stone-600 transition-colors">
+                                            <Icons.Settings className="w-5 h-5" />
+                                        </button>
+                                        <button onClick={logout} className="p-2 bg-stone-100 rounded-full text-stone-400 hover:text-rose-500 transition-colors">
+                                            <Icons.LogOut className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                    <div className="text-left flex items-center gap-1">
+                                        <span className="text-2xl font-bold" style={activeTextStyle}>{progress}%</span>
+                                        <span className="text-xs text-stone-400 font-medium uppercase">בוצע</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Progress Bar */}
+                            <div className="h-2.5 w-full bg-stone-200/50 rounded-full overflow-hidden mb-2">
+                                <div className="h-full transition-all duration-700 ease-out rounded-full opacity-90" style={{ width: `${progress}%`, ...activeBgStyle }} />
+                            </div>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex overflow-x-auto no-scrollbar border-t border-stone-100/50 max-w-md mx-auto bg-white/40 backdrop-blur-md px-1">
+                            {prefs.categories.map((cat) => {
+                                const CatIcon = Icons[cat.icon] || Icons.Sun;
+                                const isActive = activeTab === cat.id;
+                                return (
+                                    <button 
+                                        key={cat.id} 
+                                        onClick={() => setActiveTab(cat.id)} 
+                                        className={`flex-1 py-3 min-w-[70px] relative transition-all duration-300 flex flex-col items-center gap-1 ${isActive ? 'bg-white/80' : 'hover:bg-white/40'}`}
+                                    >
+                                        <CatIcon className="w-5 h-5 transition-colors" style={{ color: isActive ? cat.color : '#d6d3d1' }} />
+                                        <span className={`text-sm font-bold ${isActive ? 'opacity-100' : 'opacity-60 text-stone-400'}`}>{cat.label}</span>
+                                        {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5" style={{ backgroundColor: cat.color }} />}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </header>
+
+                    {/* Main List */}
+                    <main className="relative max-w-md mx-auto p-4 z-10">
+                        {loading ? <div className="text-center py-12 text-stone-400 animate-pulse">טוען נתונים...</div> : 
+                        filteredTasks.length === 0 ? (
+                            <div className="text-center py-20 px-8 bg-white/50 rounded-2xl shadow-sm border border-stone-100">
+                                <div className="inline-flex items-center justify-center w-20 h-20 rounded-full mb-6" style={activeLightBg}>
+                                    <Icons.CheckCircle2 className="w-10 h-10 opacity-60" style={activeTextStyle} />
+                                </div>
+                                <h3 className="text-xl font-bold text-stone-800">אין משימות כאן</h3>
+                                <p className="text-stone-500 mt-2 leading-relaxed">הוסף את המשימה הראשונה שלך למטה.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {filteredTasks.map((task) => {
+                                    const taskCat = prefs.categories.find(c => c.id === task.category) || prefs.categories[0];
+                                    return (
+                                        <div 
+                                            key={task.id} 
+                                            data-task-id={task.id} 
+                                            onTouchStart={(e) => !task.completed && handleTouchStart(e, task.id)} 
+                                            className={`task-item group relative flex items-center gap-3 p-4 rounded-xl border ${task.completed ? 'border-transparent shadow-none bg-stone-100/50' : 'bg-white border-stone-100 shadow-sm'} ${draggedTaskId === task.id ? 'is-dragging' : ''}`}
+                                        >
+                                            <button 
+                                                onClick={() => toggleTask(task.id)} 
+                                                className={`flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-300 ${task.completed ? 'text-white scale-100' : 'border-stone-300 text-transparent hover:border-stone-400 scale-95 hover:scale-100'}`}
+                                                style={task.completed ? { backgroundColor: taskCat.color, borderColor: taskCat.color } : {}}
+                                            >
+                                                <Icons.Check className="w-3.5 h-3.5" strokeWidth="3" />
+                                            </button>
+                                            
+                                            <div className="flex-1 min-w-0 py-1">
+                                                {editingId === task.id ? (
+                                                    <form onSubmit={(e) => { e.preventDefault(); saveEdit(); }} className="flex items-center gap-2">
+                                                        <input type="text" value={editText} onChange={(e) => setEditText(e.target.value)} className="w-full bg-transparent border-b-2 border-stone-400 focus:border-stone-600 outline-none pb-1 text-stone-800 font-medium" autoFocus onBlur={() => {}} />
+                                                        <button type="submit" className="p-1.5 text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100"><Icons.Check className="w-4 h-4" /></button>
+                                                    </form>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <p className={`text-base font-medium transition-colors ${task.completed ? 'text-stone-400 line-through' : 'text-stone-700'}`}>{task.text}</p>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            {activeTab === 'All' && <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold opacity-80" style={{ color: taskCat.color }}>{taskCat.label}</span>}
+                                                            {task.type === 'daily' ? 
+                                                                <span className="inline-flex items-center gap-1 text-[10px] text-stone-400 font-medium bg-stone-50 px-1.5 py-0.5 rounded border border-stone-100"><Icons.Repeat className="w-3 h-3" /> יומי</span> : 
+                                                                <span className="inline-flex items-center gap-1 text-[10px] text-stone-400 font-medium bg-white px-1.5 py-0.5 rounded border border-stone-100">חד פעמי</span>
+                                                            }
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+
+                                            <div className={`flex items-center gap-1 transition-opacity duration-200 ${task.completed ? 'opacity-0' : 'opacity-100'}`}>
+                                                {!editingId && (
+                                                    <>
+                                                        <button onClick={() => startEditing(task)} className="p-2 text-stone-300 hover:text-stone-500 rounded-lg transition-colors"><Icons.Pencil className="w-4 h-4" /></button>
+                                                        <button onClick={() => deleteTask(task.id)} className="p-2 text-stone-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Icons.Trash2 className="w-4 h-4" /></button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {completedCount > 0 && (
+                                    <div className="pt-6 flex justify-center pb-24">
+                                        <button onClick={clearCompletedInTab} className="flex flex-col items-center gap-1 text-xs font-medium text-stone-400 hover:text-stone-600 bg-white hover:bg-white/80 px-6 py-3 rounded-xl transition-all shadow-sm w-full sm:w-auto border border-stone-100">
+                                            <span>אפס / נקה משימות שהושלמו</span>
+                                            <span className="text-[10px] opacity-70 font-normal">(מאפס משימות יומיות, מוחק חד-פעמיות)</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Footer Status */}
+                    <div className={`fixed bottom-0 left-0 right-0 pointer-events-none z-0 pb-1 text-center text-[10px] font-bold ${syncStatus.includes('שגיאה') ? 'text-red-500' : 'text-stone-300'}`}>
+                        {syncStatus}
+                    </div>
+
+                    {/* Input Bar */}
+                    <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white/0 via-[#f8f5f2]/80 to-[#f8f5f2] pt-8 pointer-events-none z-30">
+                        <div className="max-w-md mx-auto pointer-events-auto">
+                            <form onSubmit={handleAddTask} className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg shadow-stone-200/50 border border-stone-100 p-2 flex items-center gap-2 transform transition-all duration-300">
+                                <div className="relative group shrink-0">
+                                    <div className="p-3 rounded-xl bg-stone-50 cursor-pointer hover:bg-stone-100 transition-colors" style={{ color: inputCategoryObj.color }}>
+                                        <InputIconComponent className="w-5 h-5" />
+                                    </div>
+                                    <select value={inputCategory} onChange={(e) => setInputCategory(e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                                        {prefs.categories.filter(c => c.id !== 'All').map(c => (<option key={c.id} value={c.id}>{c.label}</option>))}
+                                    </select>
+                                </div>
+                                <input 
+                                    type="text" 
+                                    value={newTask} 
+                                    onChange={(e) => setNewTask(e.target.value)} 
+                                    onFocus={() => setIsInputFocused(true)} 
+                                    onBlur={() => setIsInputFocused(false)} 
+                                    placeholder={`הוסף ל${inputCategoryObj.label}...`} 
+                                    className="flex-1 bg-transparent py-3 text-stone-700 placeholder:text-stone-400 font-medium focus:outline-none min-w-0 text-right" 
+                                    autoComplete="off" 
+                                />
+                                <button type="button" onClick={() => setInputType(inputType === 'daily' ? '1to' : 'daily')} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors border ${inputType === 'daily' ? 'bg-stone-100 text-stone-600 border-stone-200' : 'bg-white text-stone-400 border-stone-100'}`}>
+                                    {inputType === 'daily' ? 'יומי' : '1x'}
+                                </button>
+                                <button type="submit" disabled={!newTask.trim()} className="shrink-0 p-3 rounded-xl text-white transition-all shadow-sm hover:opacity-90 disabled:bg-stone-200 disabled:text-stone-400" style={{ backgroundColor: newTask.trim() ? inputCategoryObj.color : '' }}>
+                                    <Icons.Plus className="w-5 h-5" />
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    {/* Settings Modal */}
+                    {showSettings && tempPrefs && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setShowSettings(false)} />
+                            <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl relative z-10 flex flex-col max-h-[85vh]">
+                                <div className="p-5 border-b border-stone-100 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold text-stone-800">הגדרות</h2>
+                                    <button onClick={() => setShowSettings(false)} className="text-stone-400 hover:text-stone-600">סגור</button>
+                                </div>
+                                
+                                <div className="overflow-y-auto p-5 space-y-6">
+                                    {/* App Title */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-stone-500 mb-2">שם האפליקציה</label>
+                                        <input 
+                                            type="text" 
+                                            value={tempPrefs.appTitle} 
+                                            onChange={(e) => setTempPrefs({ ...tempPrefs, appTitle: e.target.value })}
+                                            className="w-full p-3 bg-stone-50 rounded-xl border border-stone-200 focus:border-stone-400 outline-none font-bold text-stone-800"
+                                        />
+                                    </div>
+
+                                    {/* Categories Config */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-stone-500 mb-2">ניהול קטגוריות</label>
+                                        <div className="space-y-3">
+                                            {tempPrefs.categories.map((cat, idx) => {
+                                                if (cat.id === 'All') return null; // Can't edit "All"
+                                                const CatIcon = Icons[cat.icon] || Icons.Sun;
+                                                return (
+                                                    <div key={cat.id} className="flex items-center gap-2 p-2 bg-stone-50 rounded-xl border border-stone-100">
+                                                        {/* Icon Picker Trigger */}
+                                                        <div className="relative">
+                                                            <button 
+                                                                onClick={() => setShowIconPicker(showIconPicker === cat.id ? null : cat.id)}
+                                                                className="w-10 h-10 rounded-lg flex items-center justify-center border border-stone-200 bg-white"
+                                                                style={{ color: cat.color }}
+                                                            >
+                                                                <CatIcon className="w-6 h-6" />
+                                                            </button>
+                                                            {/* Mini Icon Grid */}
+                                                            {showIconPicker === cat.id && (
+                                                                <div className="absolute top-12 right-0 bg-white p-2 rounded-xl shadow-xl border border-stone-100 z-20 grid grid-cols-4 gap-2 w-48">
+                                                                    {Object.keys(Icons).map(iconName => {
+                                                                        const Ico = Icons[iconName];
+                                                                        return (
+                                                                            <button 
+                                                                                key={iconName} 
+                                                                                onClick={() => { updateTempCategory(cat.id, 'icon', iconName); setShowIconPicker(null); }}
+                                                                                className={`p-2 rounded hover:bg-stone-50 flex justify-center ${cat.icon === iconName ? 'bg-stone-100 text-stone-800' : 'text-stone-400'}`}
+                                                                            >
+                                                                                <Ico className="w-5 h-5" />
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Name Input */}
+                                                        <input 
+                                                            type="text" 
+                                                            value={cat.label} 
+                                                            onChange={(e) => updateTempCategory(cat.id, 'label', e.target.value)}
+                                                            className="flex-1 bg-transparent outline-none font-medium text-stone-700 min-w-0"
+                                                        />
+
+                                                        {/* Color Picker */}
+                                                        <input 
+                                                            type="color" 
+                                                            value={cat.color} 
+                                                            onChange={(e) => updateTempCategory(cat.id, 'color', e.target.value)}
+                                                            className="shrink-0"
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="p-5 border-t border-stone-100 bg-stone-50 rounded-b-2xl">
+                                    <button onClick={saveSettings} className="w-full py-3 bg-stone-800 text-white rounded-xl font-bold shadow-lg hover:bg-stone-900 transition-colors">
+                                        שמור שינויים
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

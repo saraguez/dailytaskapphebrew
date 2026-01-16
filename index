@@ -90,13 +90,14 @@
 
         // --- 🔴 CONFIGURATION SECTION 🔴 ---
         const firebaseConfig = {
-            apiKey: "AIzaSyDNA6RoKmDZKOaFx30k2SrS70EkqVckmvg",
-            authDomain: "sara-s-daily-tasks.firebaseapp.com",
-            projectId: "sara-s-daily-tasks",
-            storageBucket: "sara-s-daily-tasks.firebasestorage.app",
-            messagingSenderId: "431647734098",
-            appId: "1:431647734098:web:cfad56edce7b6d14aa628b"
-        };
+  apiKey: "AIzaSyD5vus-_TOgHZJuJGo3jTWkcdRqFN_ikF8",
+  authDomain: "dailytaskapphebrew.firebaseapp.com",
+  projectId: "dailytaskapphebrew",
+  storageBucket: "dailytaskapphebrew.firebasestorage.app",
+  messagingSenderId: "1029388626249",
+  appId: "1:1029388626249:web:ac5317f11957b432539298"
+};
+
 
         try {
             const app = initializeApp(typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig);
